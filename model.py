@@ -26,8 +26,6 @@ class Model:
         with open('fa-stopwords.txt', 'r', encoding='utf8') as f:
             self.stopwords = [x for x in f.read().split()]
 
-        self._load_word_embedding()
-
 
     def _numbers_to_english(self, text):
         text = text.replace('۰', '0')
@@ -69,7 +67,7 @@ class Model:
     def predict(self, text):
         text = self.preprocess(text)
         en_cm = [encode_comment(text)]
-        input_cm = sequence.pad_sequences(en_cm, maxlen=max_words)
+        input_cm = sequence.pad_sequences(en_cm, maxlen=self.max_words)
         probabilities = model.predict(input_cm)
         print(' (+) Positive: {:.1f}%'.format(probabilities[0][2] * 100))
         print(' (/) Neutral:  {:.1f}%'.format(probabilities[0][0] * 100))
@@ -77,8 +75,9 @@ class Model:
 
 
     def _build_model(self):
+        embedding_size = 100
         self.model = Sequential()
-        self.model.add(Embedding(input_dim=word_embeddings.shape[0], output_dim=word_embeddings.shape[1], weights=[word_embeddings], trainable=False, input_length=max_words))
+        self.model.add(Embedding(input_dim=self.word_embeddings.shape[0], output_dim=self.word_embeddings.shape[1], weights=[self.word_embeddings], trainable=False, input_length=self.max_words))
         self.model.add(Dropout(rate=0.2))
         self.model.add(Bidirectional(LSTM(100)))
         self.model.add(Dropout(rate=0.4))
@@ -88,10 +87,10 @@ class Model:
                     optimizer='adam',
                     metrics=['accuracy'])
 
-        print(model.summary())
+        print(self.model.summary())
 
 
-    def _load_word_embedding(self, file_name="persian_glove300d.txt"):
+    def _load_word_embedding(self, words, file_name="persian_glove300d.txt"):
         self.word2id = {}
         self.word_embeddings = []
 
@@ -110,7 +109,7 @@ class Model:
                 vector = np.random.uniform(-0.25, 0.25, len(split)-1)
                 self.word_embeddings.append(vector)
 
-            if word.lower() in words:               ## words is not defined????
+            if word.lower() in words:
                 vector = np.array([float(num) for num in split[1:]])
                 self.word_embeddings.append(vector)
                 self.word2id[word] = len(self.word2id)
@@ -130,16 +129,26 @@ class Model:
         print('Preprocessing...')
         comments.dropna(subset=['comment'], inplace=True)
 
+        indices = comments[comments['recommend'] == '\\N'].index
+        comments = comments.drop(indices)
+
         le = LabelEncoder()
         le.fit(comments['recommend'])
+        
         comments['enc_recommend'] = le.transform(comments['recommend'])
         comments['comment'] = comments['comment'].astype(str) + ' ' + comments['title'].astype(str)
 
 
         comments['comment'] = comments['comment'].apply(self.preprocess)
 
-        indicies = comments[comments['comment'].str.len() == 0].index
-        comments = comments.drop(indicies)
+        indices = comments[comments['comment'].str.len() == 0].index
+        comments = comments.drop(indices)
+
+        coherent = ' '.join(comments['comment'])
+        tokens = coherent.split()
+        words = Counter(tokens)
+
+        self._load_word_embedding(words)
 
         comments['enc_comment'] = comments['comment'].apply(self._encode_comment)
 
@@ -153,12 +162,10 @@ class Model:
         y_test = to_categorical(y_test)
 
         words_length = {len(i) for i in comments.enc_comment}
-        max_words = int(max(words_length))
+        self.max_words = int(max(words_length))
 
-        X_train = sequence.pad_sequences(X_train, maxlen=max_words)
-        X_test = sequence.pad_sequences(X_test, maxlen=max_words)
-
-        embedding_size = 100
+        X_train = sequence.pad_sequences(X_train, maxlen=self.max_words)
+        X_test = sequence.pad_sequences(X_test, maxlen=self.max_words)
         
         self._build_model()
 
